@@ -4,7 +4,8 @@ import pandas as pd
 from streamlit_option_menu import option_menu
 import requests
 from nltk.sentiment import SentimentIntensityAnalyzer
-
+import nltk
+nltk.download('vader_lexicon')
 #Load data
 
 movies_dict = pickle.load(open('movie_dict.pkl','rb'))
