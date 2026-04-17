@@ -1,5 +1,4 @@
 import pickle
-
 import nltk
 import pandas as pd
 import requests
@@ -34,6 +33,10 @@ def apply_custom_theme():
             }
             [data-testid="stHeader"] {
                 background: rgba(2, 6, 23, 0.85);
+            }
+            [data-testid="stSidebarCollapseButton"],
+            [data-testid="collapsedControl"] {
+                display: none !important;
             }
             [data-testid="stToolbar"] {
                 right: 1rem;
@@ -161,43 +164,60 @@ def fetch_watch_providers(movie_id, region):
     url = f"https://api.themoviedb.org/3/movie/{movie_id}/watch/providers?api_key={API_KEY}"
     try:
         data = requests.get(url, timeout=5).json()
-        region_data = data.get("results", {}).get(region, {})
+        all_results = data.get("results", {})
+        if region == "ALL":
+            merged_region = {"free": [], "ads": [], "flatrate": [], "buy": [], "rent": []}
+            first_link = ""
+            for _, region_data in all_results.items():
+                for key in merged_region:
+                    merged_region[key].extend(region_data.get(key, []))
+                if not first_link and region_data.get("link"):
+                    first_link = region_data.get("link")
+            region_data = merged_region
+            region_data["link"] = first_link
+        else:
+            region_data = all_results.get(region, {})
 
         free_raw = region_data.get("free", []) + region_data.get("ads", [])
         free_streaming = []
         seen_free = set()
         for provider in free_raw:
-            if provider["provider_name"] not in seen_free and provider.get("logo_path"):
+            provider_key = provider.get("provider_id", provider.get("provider_name"))
+            if provider_key not in seen_free and provider.get("logo_path"):
                 free_streaming.append(
                     {
                         "name": provider["provider_name"],
                         "logo": "https://image.tmdb.org/t/p/w45" + provider["logo_path"],
                     }
                 )
-                seen_free.add(provider["provider_name"])
+                seen_free.add(provider_key)
 
         paid_streaming = []
+        seen_paid = set()
         for provider in region_data.get("flatrate", []):
-            if provider.get("logo_path"):
+            provider_key = provider.get("provider_id", provider.get("provider_name"))
+            if provider_key not in seen_paid and provider.get("logo_path"):
                 paid_streaming.append(
                     {
                         "name": provider["provider_name"],
                         "logo": "https://image.tmdb.org/t/p/w45" + provider["logo_path"],
                     }
                 )
+                seen_paid.add(provider_key)
 
         buy_rent_raw = region_data.get("buy", []) + region_data.get("rent", [])
         buy_rent = []
         seen_buy_rent = set()
         for provider in buy_rent_raw:
-            if provider["provider_name"] not in seen_buy_rent and provider.get("logo_path"):
+            provider_key = provider.get("provider_id", provider.get("provider_name"))
+            if provider_key not in seen_buy_rent and provider.get("logo_path"):
                 buy_rent.append(
                     {
                         "name": provider["provider_name"],
                         "logo": "https://image.tmdb.org/t/p/w45" + provider["logo_path"],
                     }
                 )
-                seen_buy_rent.add(provider["provider_name"])
+                seen_buy_rent.add(provider_key)
 
         link = region_data.get("link", "")
         return {
@@ -221,9 +241,17 @@ def fetch_provider_regions():
             name = item.get("english_name") or code
             if code:
                 mapped[code] = name
-        return dict(sorted(mapped.items(), key=lambda x: x[1]))
+        sorted_map = dict(sorted(mapped.items(), key=lambda x: x[1]))
+        return {"ALL": "All Countries"} | sorted_map
     except Exception:
-        return {"US": "United States", "IN": "India", "GB": "United Kingdom", "CA": "Canada", "AU": "Australia"}
+        return {
+            "ALL": "All Countries",
+            "US": "United States",
+            "IN": "India",
+            "GB": "United Kingdom",
+            "CA": "Canada",
+            "AU": "Australia",
+        }
 
 
 def recommend(movie):
@@ -358,14 +386,14 @@ with st.sidebar:
         menu_title=None,
         options=["Home", "Trending Movies", "Top Rated Movies", "Genre Filter", "Compare Mode"],
         icons=["house", "fire", "star", "funnel", "columns-gap"],
-        menu_icon="cast",
+        menu_icon="list",
         default_index=0,
         orientation="vertical",
         styles={
             "container": {"padding": "0!important", "background-color": "transparent"},
             "icon": {"color": "white", "font-size": "18px"},
             "nav-link": {
-                "font-size": "15px",
+                "font-size": "16px",
                 "text-align": "left",
                 "margin": "0px",
                 "--hover-color": "#334155",
@@ -381,12 +409,12 @@ with st.sidebar:
     st.markdown("---")
     region_map = fetch_provider_regions()
     region_codes = list(region_map.keys())
-    default_index = region_codes.index("US") if "US" in region_codes else 0
+    default_index = region_codes.index("ALL") if "ALL" in region_codes else 0
     region = st.selectbox(
         "Watch providers region",
         region_codes,
         index=default_index,
-        format_func=lambda code: f"{code} — {region_map.get(code, code)}",
+        format_func=lambda code: region_map.get(code, code),
     )
     max_items = st.slider("How many movies to show", min_value=5, max_value=20, value=10, step=5)
 
