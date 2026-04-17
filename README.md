@@ -1,77 +1,216 @@
 # 🎬 Movie Recommendation System
 
-![Python](https://img.shields.io/badge/Python-3.8%2B-blue)
-![Machine Learning](https://img.shields.io/badge/Machine%20Learning-Content%20Based-orange)
-![Streamlit](https://img.shields.io/badge/Streamlit-App-red)
-![NLTK](https://img.shields.io/badge/NLP-NLTK%20VADER-success)
+A production-style **Streamlit movie discovery app** powered by a content-based recommendation engine and live TMDB metadata.
 
-A Machine Learning-based web application that recommends movies based on user interests. This project uses a **Content-Based Filtering** approach to suggest the top 5 most similar movies to your search, complete with their official posters, detailed information, trailers, and sentiment analysis!
-
-### 🔴 Live Demo
-**Check out the live app here:** [Movie Recommendation System](https://movie-recommendation-system-superb.streamlit.app/)
-
-**View the Model Training Code:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1U6ir0mLUhg9mpAHM5_L-fTw1H5o0InNP?usp=drive_link)
+It helps users:
+- find similar movies instantly,
+- explore trending/top-rated titles,
+- check region-specific watch providers,
+- and compare two movies side-by-side.
 
 ---
 
----
-
-## ✨ Key Features
-* **Multi-Tab Interface:** A rich, easy-to-navigate UI featuring dedicated sections for **Home (Recommendations)**, **Trending Movies**, **Top Rated Movies**, and a **Genre Filter**.
-* **Discover & Explore:** Users can easily browse through current trending hits, all-time highest-rated classics, or filter movies by their favorite genres.
-* **Personalized Recommendations:** Get the top 5 most relevant movie suggestions based on your selection using Cosine Similarity.
-* **Comprehensive Movie Details:** Instantly view essential movie information including **Ratings**, **Release Dates**, and detailed **Plot Overviews**.
-* **Embedded Trailers:** Watch the official HD YouTube trailers directly within the web app without leaving the page!
-* **Dynamic Posters:** Automatically fetches high-quality, official movie posters in real-time using the TMDB API.
-* **Sentiment Analysis:** Integrated NLTK's VADER to analyze the sentiment of movie-related text.
-* **Highly Optimized:** Fast loading and efficient memory usage (model compressed to just 44MB without losing recommendation accuracy).
-
----
-
-## 🧠 How It Works
-This recommendation engine relies on **Content-Based Filtering**. It doesn't rely on user ratings or history; instead, it looks at the metadata of the movies themselves.
-
-1. **Data Preprocessing:** We combine key movie attributes like Plot Overview, Genres, Keywords, Top 3 Cast members, and the Director into a single "tags" paragraph for each movie.
-2. **Text Vectorization:** Using the **Bag of Words** technique (`CountVectorizer`), we convert these textual tags into mathematical vectors (5000 dimensions) after removing English stop words and applying stemming.
-3. **Calculating Similarity:** We use **Cosine Similarity** to measure the angular distance between these vectors in a high-dimensional space.
-4. **Recommendation:** When a user selects a movie, the system fetches the 5 closest movie vectors and displays them along with their detailed info and multimedia fetched dynamically.
+## Table of Contents
+- [Live Links](#live-links)
+- [Key Features](#key-features)
+- [Product Walkthrough](#product-walkthrough)
+- [Architecture](#architecture)
+- [Tech Stack](#tech-stack)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [How Recommendations Work](#how-recommendations-work)
+- [Compare Mode](#compare-mode)
+- [Performance & Caching](#performance--caching)
+- [Known Limitations](#known-limitations)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Dataset & Credits](#dataset--credits)
 
 ---
 
-## 🛠️ Tech Stack
-* **Programming Language:** Python
-* **Data Manipulation:** Pandas, NumPy
-* **Machine Learning:** Scikit-Learn (CountVectorizer, Cosine Similarity)
-* **Natural Language Processing:** NLTK (PorterStemmer, VADER)
-* **Web Framework:** Streamlit
-* **API:** TMDB API (for fetching movie posters, details, lists, and video keys)
+## Live Links
+- **Web App:** https://movie-recommendation-system-superb.streamlit.app/
+- **Model notebook (Colab):** https://colab.research.google.com/drive/1U6ir0mLUhg9mpAHM5_L-fTw1H5o0InNP?usp=drive_link
 
 ---
 
-## 🚀 Running the Project Locally
-If you want to run this project on your own machine, follow these steps:
+## Key Features
 
-**1. Clone the repository**
+### 1) Smart Recommendations
+- Content-based filtering with precomputed cosine similarity.
+- Fast top-5 recommendations for any selected movie.
+
+### 2) Rich Movie Detail Cards
+- Poster, rating, release date, overview.
+- Runtime and genres (where available from TMDB).
+- Embedded trailer playback.
+- Sentiment mood tag (VADER).
+
+### 3) Region-Aware Watch Providers
+- Dynamic region list from TMDB provider regions endpoint.
+- Grouped provider results:
+  - Free / Ad-supported
+  - Subscription
+  - Buy / Rent
+- User-facing fallback message if no providers are found.
+
+### 4) Discovery Views
+- **Home**: movie selection + recommendations.
+- **Trending Movies**: weekly trending feed.
+- **Top Rated Movies**: critically acclaimed picks.
+- **Genre Filter**: quick genre-based browsing.
+- **Compare Mode**: side-by-side comparison of two movies.
+
+### 5) UI/UX
+- Dark-themed interface with modern typography.
+- Reusable card-based components.
+- Configurable item count per listing.
+
+---
+
+## Product Walkthrough
+
+1. Open app and choose region from **Watch providers region**.
+2. Use **Home** to select a movie and get top recommendations.
+3. Inspect poster, details, platforms, and trailer.
+4. Use **Compare Mode** to evaluate two movies in parallel.
+5. Explore **Trending**, **Top Rated**, or **Genre Filter** for discovery.
+
+---
+
+## Architecture
+
+### Data Layer
+- `movie_dict.pkl`: movie metadata for app lookup.
+- `similarity.pkl`: precomputed similarity matrix for fast retrieval.
+
+### Service Layer
+- TMDB API wrappers (details, posters, trailers, watch providers, regions).
+- Caching decorators for reduced API overhead and faster UI response.
+
+### Presentation Layer
+- Streamlit UI pages + reusable rendering helpers for consistency.
+
+---
+
+## Tech Stack
+- **Language:** Python
+- **Framework:** Streamlit
+- **ML/NLP:** Scikit-learn, NLTK (VADER)
+- **Data:** Pandas, Pickle
+- **API:** TMDB
+
+---
+
+## Project Structure
+
+```text
+movie-recommendation-system/
+├── app.py                 # Main Streamlit app
+├── movie_dict.pkl         # Movie metadata
+├── similarity.pkl         # Similarity matrix
+├── requirements.txt       # Python dependencies
+└── README.md
 ```
-git clone [https://github.com/Jaysudani05/movie-recommendation-system.git](https://github.com/Jaysudani05/movie-recommendation-system.git)
 
+---
+
+## Getting Started
+
+### Prerequisites
+- Python 3.8+
+- pip
+
+### Installation
+```bash
+git clone https://github.com/Jaysudani05/movie-recommendation-system.git
 cd movie-recommendation-system
-```
-**2. Install the required libraries**
-```
 pip install -r requirements.txt
 ```
 
-**3. Run the Streamlit App**
-
-```
+### Run
+```bash
 streamlit run app.py
 ```
+Then open the local URL shown in the terminal (commonly `http://localhost:8501`).
 
-## 📂 Dataset Used
-* [TMDB 5000 Movies & Credits Dataset](https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata)
-
-## 💡 Note on Optimization
-To keep the machine learning model lightweight and bypass GitHub's 100MB file limit without needing Git LFS, the 4806x4806 similarity matrix was compressed down to 44MB by casting the data type to float16 (astype(np.float16)). This preserves the recommendation accuracy while drastically reducing the deployment overhead!
 ---
-*Developed by Jay Sudani*
+
+## Configuration
+
+### TMDB API Key
+The app currently uses a TMDB API key in code.
+For production, move it to an environment variable:
+
+```bash
+export TMDB_API_KEY="your_api_key_here"
+```
+
+Then update `app.py` to read via `os.getenv("TMDB_API_KEY")`.
+
+---
+
+## How Recommendations Work
+
+1. Build a movie "tags" representation from metadata.
+2. Vectorize text features (Bag of Words).
+3. Compute cosine similarity between movie vectors.
+4. Return top nearest neighbors as recommendations.
+
+---
+
+## Compare Mode
+
+Compare two selected movies side-by-side with:
+- poster,
+- ratings and release date,
+- genres and runtime,
+- watch providers by selected region,
+- trailer embeds.
+
+---
+
+## Performance & Caching
+
+The app uses:
+- `@st.cache_resource` for heavy static loads,
+- `@st.cache_data` for TMDB responses and computed data,
+
+which reduces repeated API calls and improves responsiveness.
+
+---
+
+## Known Limitations
+
+- Provider availability depends on TMDB regional data quality.
+- Some movies may not have trailer/provider/runtime metadata.
+- Recommendation quality depends on source metadata richness.
+
+---
+
+## Roadmap
+
+- Add user watchlist and favorites.
+- Add advanced filters (year, language, runtime range).
+- Add explainable recommendations (“why this was recommended”).
+- Add tests for API wrappers and UI helper functions.
+
+---
+
+## Contributing
+
+Contributions are welcome.
+1. Fork the repo
+2. Create a feature branch
+3. Commit your changes
+4. Open a pull request with a clear summary
+
+---
+
+## Dataset & Credits
+
+- Dataset: https://www.kaggle.com/datasets/tmdb/tmdb-movie-metadata
+- Movie metadata/media: https://www.themoviedb.org/
+
+Built by **Jay Sudani**.
