@@ -7,6 +7,8 @@ import streamlit as st
 from nltk.sentiment import SentimentIntensityAnalyzer
 from streamlit_option_menu import option_menu
 
+from streamlit_searchbox import st_searchbox
+
 nltk.download("vader_lexicon", quiet=True)
 
 st.set_page_config(
@@ -210,7 +212,21 @@ def fetch_tmdb_recommendations(movie_id, limit=5):
     url = f"https://api.themoviedb.org/3/movie/{movie_id}/recommendations?api_key={API_KEY}&language=en-US&page=1"
     try:
         results = requests.get(url, timeout=5).json().get("results", [])
-        return results[:limit]
+        
+        # Also fetch similar movies based on genres and keywords
+        similar_url = f"https://api.themoviedb.org/3/movie/{movie_id}/similar?api_key={API_KEY}&language=en-US&page=1"
+        try:
+            similar_results = requests.get(similar_url, timeout=5).json().get("results", [])
+            # Combine both lists and remove duplicates
+            seen_ids = set()
+            combined = []
+            for rec in similar_results + results:
+                if rec.get("id") not in seen_ids:
+                    combined.append(rec)
+                    seen_ids.add(rec.get("id"))
+            return combined[:limit]
+        except Exception:
+            return results[:limit]
     except Exception:
         return []
 
@@ -631,12 +647,32 @@ with st.sidebar:
 
 if menu == "Home":
     combined_options = get_combined_selectbox_options()
-    selected_movie_input = st.selectbox(
-        "Search & Select a Movie",
-        options=combined_options,
-        index=None,
-        placeholder="Choose an option",
-        accept_new_options=True,
+
+    def search_movies(searchterm: str) -> list[str]:
+        if not searchterm:
+            return combined_options[:100]
+        term = searchterm.lower()
+        dataset_titles = [m for m in combined_options if term in m.lower()][:10]
+        
+        url = f"https://api.themoviedb.org/3/search/movie?api_key={API_KEY}&language=en-US&query={searchterm}"
+        try:
+            results = requests.get(url, timeout=5).json().get("results", [])
+            api_titles = [r["title"] for r in results if r.get("title")][:10]
+        except Exception:
+            api_titles = []
+            
+        merged = dataset_titles
+        seen = {t.lower() for t in merged}
+        for t in api_titles:
+            if t.lower() not in seen:
+                merged.append(t)
+                seen.add(t.lower())
+        return merged
+
+    selected_movie_input = st_searchbox(
+        search_movies,
+        key="searchbox",
+        placeholder="Search & Select a Movie"
     )
 
     if st.button("Search / Recommend"):
@@ -671,12 +707,31 @@ if menu == "Home":
                             display_movie_details(rec_id, rec_title, rec_poster, region)
                             shown_ids.add(rec_id)
                 
-                st.markdown("#### ⭐ Similar By Content")
-                for idx, name in enumerate(names):
-                    if ids[idx] not in shown_ids:
+                st.markdown("#### ⭐ Similar By Content & Genre (API)")
+                
+                # Fetch fresh API recommendations based on genres and similarities to improve context
+                tmdb_recommendations = fetch_tmdb_recommendations(selected_movie_id, limit=10)
+                filtered_recommendations = [rec_movie for rec_movie in tmdb_recommendations if rec_movie.get("id") not in shown_ids][:5]
+                
+                if filtered_recommendations:
+                    for rec_movie in filtered_recommendations:
                         st.markdown("---")
-                        display_movie_details(ids[idx], name, posters[idx], region)
-                        shown_ids.add(ids[idx])
+                        rec_id = rec_movie.get("id")
+                        rec_title = rec_movie.get("title", "Untitled")
+                        rec_poster = (
+                            "https://image.tmdb.org/t/p/w500" + rec_movie["poster_path"]
+                            if rec_movie.get("poster_path")
+                            else None
+                        )
+                        display_movie_details(rec_id, rec_title, rec_poster, region)
+                        shown_ids.add(rec_id)
+                else:
+                    # Fallback to local similarity matrix if API fails
+                    for idx, name in enumerate(names):
+                        if ids[idx] not in shown_ids:
+                            st.markdown("---")
+                            display_movie_details(ids[idx], name, posters[idx], region)
+                            shown_ids.add(ids[idx])
             else:
                 tmdb_movie = fetch_tmdb_movie_by_title(normalized_query)
                 if tmdb_movie:
@@ -710,7 +765,7 @@ if menu == "Home":
                     filtered_recommendations = [rec_movie for rec_movie in tmdb_recommendations if rec_movie.get("id") not in shown_ids][:5]
                     
                     if filtered_recommendations:
-                        st.markdown("#### ⭐ Similar By Content")
+                        st.markdown("#### ⭐ Similar By Content & Genre")
                     for rec_movie in filtered_recommendations:
                         st.markdown("---")
                         rec_id = rec_movie.get("id")
@@ -756,7 +811,7 @@ if menu == "Home":
                                 rec_movie for rec_movie in api_recommendations if rec_movie.get("id") not in shown_ids
                             ][:5]
                             if filtered_recommendations:
-                                st.subheader("✨ Recommendations (API)")
+                                st.subheader("✨ Recommendations By Genre (API)")
                                 for rec_movie in filtered_recommendations:
                                     st.markdown("---")
                                     rec_id = rec_movie.get("id")
