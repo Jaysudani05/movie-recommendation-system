@@ -209,26 +209,22 @@ def fetch_tmdb_movie_by_title(movie_title):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_tmdb_recommendations(movie_id, limit=5):
-    url = f"https://api.themoviedb.org/3/movie/{movie_id}/recommendations?api_key={API_KEY}&language=en-US&page=1"
+    # Only use 'similar' to strictly guarantee genre/theme matches
+    url_sim = f"https://api.themoviedb.org/3/movie/{movie_id}/similar?api_key={API_KEY}&language=en-US&page=1"
+    
+    similar_movies = []
+    seen = set()
+    
     try:
-        results = requests.get(url, timeout=5).json().get("results", [])
-        
-        # Also fetch similar movies based on genres and keywords
-        similar_url = f"https://api.themoviedb.org/3/movie/{movie_id}/similar?api_key={API_KEY}&language=en-US&page=1"
-        try:
-            similar_results = requests.get(similar_url, timeout=5).json().get("results", [])
-            # Combine both lists and remove duplicates
-            seen_ids = set()
-            combined = []
-            for rec in similar_results + results:
-                if rec.get("id") not in seen_ids:
-                    combined.append(rec)
-                    seen_ids.add(rec.get("id"))
-            return combined[:limit]
-        except Exception:
-            return results[:limit]
+        res_sim = requests.get(url_sim, timeout=5).json().get("results", [])
+        for m in res_sim:
+            if m.get("id") not in seen:
+                similar_movies.append(m)
+                seen.add(m.get("id"))
     except Exception:
-        return []
+        pass
+        
+    return similar_movies[:limit]
 
 
 def fetch_external_movie_by_id(imdb_id):
@@ -590,6 +586,9 @@ def display_movie_details(movie_id, title, poster, region, show_trailer=True):
             if trailer:
                 st.markdown("<div class='trailer-block'></div>", unsafe_allow_html=True)
                 st.video(trailer)
+            else:
+                st.markdown("<div class='trailer-block'></div>", unsafe_allow_html=True)
+                st.info("Trailer is not available on YouTube.")
 
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -635,7 +634,10 @@ with st.sidebar:
     st.markdown("---")
     region_map = fetch_provider_regions()
     region_codes = list(region_map.keys())
-    default_index = region_codes.index("ALL") if "ALL" in region_codes else 0
+    if "IN" in region_codes:
+        default_index = region_codes.index("IN")
+    else:
+        default_index = region_codes.index("ALL") if "ALL" in region_codes else 0
     region = st.selectbox(
         "Watch providers region",
         region_codes,
@@ -667,12 +669,18 @@ if menu == "Home":
             if t.lower() not in seen:
                 merged.append(t)
                 seen.add(t.lower())
+                
+        # To prevent "Add: {searchterm}" in the searchbox, ensure the term is exactly in the options
+        if searchterm and searchterm.lower() not in seen:
+            merged.insert(0, searchterm)
+            
         return merged
 
     selected_movie_input = st_searchbox(
         search_movies,
         key="searchbox",
-        placeholder="Search & Select a Movie"
+        placeholder="Search & Select a Movie",
+        default_options=combined_options[:50]
     )
 
     if st.button("Search / Recommend"):
@@ -707,31 +715,12 @@ if menu == "Home":
                             display_movie_details(rec_id, rec_title, rec_poster, region)
                             shown_ids.add(rec_id)
                 
-                st.markdown("#### ⭐ Similar By Content & Genre (API)")
-                
-                # Fetch fresh API recommendations based on genres and similarities to improve context
-                tmdb_recommendations = fetch_tmdb_recommendations(selected_movie_id, limit=10)
-                filtered_recommendations = [rec_movie for rec_movie in tmdb_recommendations if rec_movie.get("id") not in shown_ids][:5]
-                
-                if filtered_recommendations:
-                    for rec_movie in filtered_recommendations:
+                st.markdown("#### ⭐ Similar By Content")
+                for idx, name in enumerate(names):
+                    if ids[idx] not in shown_ids:
                         st.markdown("---")
-                        rec_id = rec_movie.get("id")
-                        rec_title = rec_movie.get("title", "Untitled")
-                        rec_poster = (
-                            "https://image.tmdb.org/t/p/w500" + rec_movie["poster_path"]
-                            if rec_movie.get("poster_path")
-                            else None
-                        )
-                        display_movie_details(rec_id, rec_title, rec_poster, region)
-                        shown_ids.add(rec_id)
-                else:
-                    # Fallback to local similarity matrix if API fails
-                    for idx, name in enumerate(names):
-                        if ids[idx] not in shown_ids:
-                            st.markdown("---")
-                            display_movie_details(ids[idx], name, posters[idx], region)
-                            shown_ids.add(ids[idx])
+                        display_movie_details(ids[idx], name, posters[idx], region)
+                        shown_ids.add(ids[idx])
             else:
                 tmdb_movie = fetch_tmdb_movie_by_title(normalized_query)
                 if tmdb_movie:
@@ -761,11 +750,11 @@ if menu == "Home":
                                 display_movie_details(rec_id, rec_title, rec_poster, region)
                                 shown_ids.add(rec_id)
 
-                    tmdb_recommendations = fetch_tmdb_recommendations(selected_movie_id, limit=10)
+                    tmdb_recommendations = fetch_tmdb_recommendations(selected_movie_id, limit=20)
                     filtered_recommendations = [rec_movie for rec_movie in tmdb_recommendations if rec_movie.get("id") not in shown_ids][:5]
                     
                     if filtered_recommendations:
-                        st.markdown("#### ⭐ Similar By Content & Genre")
+                        st.markdown("#### ⭐ Similar By Content")
                     for rec_movie in filtered_recommendations:
                         st.markdown("---")
                         rec_id = rec_movie.get("id")
@@ -786,8 +775,7 @@ if menu == "Home":
                         suggestion_movies = trending_movies()[:5]
 
                     if suggestion_movies:
-                        st.warning("Movie not found in dataset. Showing API suggestions and recommendations.")
-                        st.subheader("🔎 Suggested Movies (API)")
+                        st.subheader("✨ Recommendations")
                         shown_ids = set()
 
                         for movie in suggestion_movies:
@@ -811,7 +799,7 @@ if menu == "Home":
                                 rec_movie for rec_movie in api_recommendations if rec_movie.get("id") not in shown_ids
                             ][:5]
                             if filtered_recommendations:
-                                st.subheader("✨ Recommendations By Genre (API)")
+                                st.subheader("✨ More Recommendations")
                                 for rec_movie in filtered_recommendations:
                                     st.markdown("---")
                                     rec_id = rec_movie.get("id")
