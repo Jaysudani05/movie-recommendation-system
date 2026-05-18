@@ -1,5 +1,6 @@
 import pickle
 import re
+import datetime as dt
 import nltk
 import pandas as pd
 import requests
@@ -127,8 +128,32 @@ def load_data():
 
 movies, similarity = load_data()
 API_KEY = "89c5848c6305c57ebe62e0c8d139362b"
-OMDB_API_KEY = "260f3bbb"
+RECOMMENDATION_LIMIT = 7
+FRANCHISE_LIMIT = 2
 sia = SentimentIntensityAnalyzer()
+
+
+def is_released(release_date):
+    if not release_date:
+        return False
+    try:
+        release_day = dt.date.fromisoformat(release_date)
+    except ValueError:
+        return False
+    return release_day <= dt.date.today()
+
+
+def has_poster(movie):
+    return bool(movie and movie.get("poster_path"))
+
+
+def release_date_value(release_date):
+    if not release_date:
+        return 0
+    try:
+        return dt.date.fromisoformat(release_date).toordinal()
+    except ValueError:
+        return 0
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -154,20 +179,41 @@ def fetch_details(movie_id):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_trailer(movie_id):
-    url = f"https://api.themoviedb.org/3/movie/{movie_id}/videos?api_key={API_KEY}&language=en-US"
     try:
-        data = requests.get(url, timeout=5).json()
-        videos = data.get("results", [])
-        youtube_candidates = [
-            v
-            for v in videos
-            if v.get("site") == "YouTube" and v.get("type") in {"Trailer", "Teaser"} and v.get("key")
+        urls = [
+            f"https://api.themoviedb.org/3/movie/{movie_id}/videos?api_key={API_KEY}&language=en-US",
+            f"https://api.themoviedb.org/3/movie/{movie_id}/videos?api_key={API_KEY}&language=en",
+            f"https://api.themoviedb.org/3/movie/{movie_id}/videos?api_key={API_KEY}",
         ]
+
+        videos = []
+        for url in urls:
+            data = requests.get(url, timeout=5).json()
+            videos = data.get("results", [])
+            if videos:
+                break
+
+        if not videos:
+            details_url = (
+                f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={API_KEY}"
+                "&append_to_response=videos"
+            )
+            data = requests.get(details_url, timeout=5).json()
+            videos = data.get("videos", {}).get("results", [])
+
+        type_priority = {
+            "Trailer": 3,
+            "Teaser": 2,
+            "Featurette": 1,
+            "Clip": 0,
+            "Behind the Scenes": 0,
+        }
+        youtube_candidates = [v for v in videos if v.get("site") == "YouTube" and v.get("key")]
         if youtube_candidates:
             youtube_candidates.sort(
                 key=lambda v: (
                     1 if v.get("official") else 0,
-                    1 if v.get("type") == "Trailer" else 0,
+                    type_priority.get(v.get("type"), -1),
                     v.get("published_at", ""),
                 ),
                 reverse=True,
@@ -179,22 +225,12 @@ def fetch_trailer(movie_id):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_external_movie_by_title(movie_title):
-    url = "https://www.omdbapi.com/"
-    try:
-        data = requests.get(url, params={"apikey": OMDB_API_KEY, "t": movie_title}, timeout=5).json()
-        if data.get("Response") == "True":
-            return data
-    except Exception:
-        pass
-    return {}
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
 def fetch_tmdb_search_movies(movie_title, limit=10):
     url = f"https://api.themoviedb.org/3/search/movie?api_key={API_KEY}&language=en-US&query={movie_title}"
     try:
-        return requests.get(url, timeout=5).json().get("results", [])[:limit]
+        results = requests.get(url, timeout=5).json().get("results", [])
+        filtered = [m for m in results if has_poster(m) and is_released(m.get("release_date"))]
+        return filtered[:limit]
     except Exception:
         return []
 
@@ -208,7 +244,7 @@ def fetch_tmdb_movie_by_title(movie_title):
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_tmdb_recommendations(movie_id, limit=5):
+def fetch_tmdb_recommendations(movie_id, limit=RECOMMENDATION_LIMIT):
     # Only use 'similar' to strictly guarantee genre/theme matches
     url_sim = f"https://api.themoviedb.org/3/movie/{movie_id}/similar?api_key={API_KEY}&language=en-US&page=1"
     
@@ -218,63 +254,14 @@ def fetch_tmdb_recommendations(movie_id, limit=5):
     try:
         res_sim = requests.get(url_sim, timeout=5).json().get("results", [])
         for m in res_sim:
-            if m.get("id") not in seen:
+            if m.get("id") not in seen and has_poster(m) and is_released(m.get("release_date")):
                 similar_movies.append(m)
                 seen.add(m.get("id"))
     except Exception:
         pass
-        
+
+    similar_movies.sort(key=lambda m: release_date_value(m.get("release_date")), reverse=True)
     return similar_movies[:limit]
-
-
-def fetch_external_movie_by_id(imdb_id):
-    url = "https://www.omdbapi.com/"
-    try:
-        data = requests.get(url, params={"apikey": OMDB_API_KEY, "i": imdb_id}, timeout=5).json()
-        if data.get("Response") == "True":
-            return data
-    except Exception:
-        pass
-    return {}
-
-
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_external_search(query):
-    url = "https://www.omdbapi.com/"
-    try:
-        data = requests.get(url, params={"apikey": OMDB_API_KEY, "s": query, "type": "movie"}, timeout=5).json()
-        if data.get("Response") == "True":
-            return data.get("Search", [])
-    except Exception:
-        pass
-    return []
-
-
-def recommend_external_movies(base_movie, limit=5):
-    base_id = base_movie.get("imdbID")
-    base_title = base_movie.get("Title", "")
-    genre_seed = base_movie.get("Genre", "").split(",")[0].strip()
-    title_seed = " ".join(base_title.split()[:2]).strip()
-    query_candidates = [base_title, genre_seed, title_seed]
-
-    recommended = []
-    seen_ids = {base_id}
-
-    for query in query_candidates:
-        if not query:
-            continue
-        search_results = fetch_external_search(query)
-        for movie in search_results:
-            imdb_id = movie.get("imdbID")
-            if not imdb_id or imdb_id in seen_ids:
-                continue
-            movie_details = fetch_external_movie_by_id(imdb_id)
-            if movie_details:
-                recommended.append(movie_details)
-                seen_ids.add(imdb_id)
-            if len(recommended) >= limit:
-                return recommended
-    return recommended
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -288,6 +275,8 @@ def fetch_api_suggestion_titles(limit=200):
             for movie in results:
                 title = movie.get("title")
                 if not title:
+                    continue
+                if not has_poster(movie) or not is_released(movie.get("release_date")):
                     continue
                 key = title.lower()
                 if key not in seen:
@@ -396,17 +385,39 @@ def fetch_provider_regions():
 def recommend(movie):
     movie_index = movies[movies["title"] == movie].index[0]
     distances = similarity[movie_index]
-    movies_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:6]
+    movies_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:]
 
-    recommended_movies = []
-    recommended_posters = []
-    recommended_ids = []
+    candidates = []
 
     for i in movies_list:
         movie_id = movies.iloc[i[0]].movie_id
-        recommended_movies.append(movies.iloc[i[0]].title)
-        recommended_posters.append(fetch_poster(movie_id))
-        recommended_ids.append(movie_id)
+        details = fetch_details(movie_id)
+        if not is_released(details.get("release_date")):
+            continue
+        poster = fetch_poster(movie_id)
+        if not poster:
+            continue
+        candidates.append(
+            {
+                "title": movies.iloc[i[0]].title,
+                "poster": poster,
+                "id": movie_id,
+                "score": i[1],
+                "release_date": details.get("release_date"),
+            }
+        )
+        if len(candidates) >= RECOMMENDATION_LIMIT * 3:
+            break
+
+    candidates.sort(
+        key=lambda m: (m["score"], release_date_value(m.get("release_date"))),
+        reverse=True,
+    )
+    candidates = candidates[:RECOMMENDATION_LIMIT]
+
+    recommended_movies = [m["title"] for m in candidates]
+    recommended_posters = [m["poster"] for m in candidates]
+    recommended_ids = [m["id"] for m in candidates]
 
     return recommended_movies, recommended_posters, recommended_ids
 
@@ -428,7 +439,7 @@ def fetch_franchise_movies(movie_id, title):
         try:
             col_data = requests.get(url, timeout=5).json()
             for part in col_data.get("parts", []):
-                if part.get("id") != movie_id:
+                if part.get("id") != movie_id and has_poster(part) and is_released(part.get("release_date")):
                     franchise_movies.append(part)
         except Exception:
             pass
@@ -443,7 +454,7 @@ def fetch_franchise_movies(movie_id, title):
             try:
                 url = f"https://api.themoviedb.org/3/search/movie?api_key={API_KEY}&language=en-US&query={title}"
                 for rec in requests.get(url, timeout=5).json().get("results", []):
-                    if rec.get("id") != movie_id:
+                    if rec.get("id") != movie_id and has_poster(rec) and is_released(rec.get("release_date")):
                         franchise_movies.append(rec)
             except Exception:
                 pass
@@ -453,7 +464,12 @@ def fetch_franchise_movies(movie_id, title):
                     url2 = f"https://api.themoviedb.org/3/search/movie?api_key={API_KEY}&language=en-US&query={base_word}"
                     for rec in requests.get(url2, timeout=5).json().get("results", []):
                         rec_title = rec.get("title", "")
-                        if rec.get("id") != movie_id and base_word.lower() in rec_title.lower():
+                        if (
+                            rec.get("id") != movie_id
+                            and base_word.lower() in rec_title.lower()
+                            and has_poster(rec)
+                            and is_released(rec.get("release_date"))
+                        ):
                             franchise_movies.append(rec)
                 except Exception:
                     pass
@@ -465,7 +481,8 @@ def fetch_franchise_movies(movie_id, title):
         if m["id"] not in seen:
             deduped.append(m)
             seen.add(m["id"])
-    return deduped[:4]
+    deduped.sort(key=lambda m: release_date_value(m.get("release_date")), reverse=True)
+    return deduped[:FRANCHISE_LIMIT]
 
 
 def find_dataset_title(movie_query):
@@ -491,7 +508,12 @@ def find_dataset_title(movie_query):
 def trending_movies():
     url = f"https://api.themoviedb.org/3/trending/movie/week?api_key={API_KEY}"
     try:
-        return requests.get(url, timeout=5).json().get("results", [])
+        results = requests.get(url, timeout=5).json().get("results", [])
+        strict = [m for m in results if has_poster(m) and is_released(m.get("release_date"))]
+        if strict:
+            return strict
+        poster_only = [m for m in results if has_poster(m)]
+        return poster_only
     except Exception:
         return []
 
@@ -500,7 +522,8 @@ def trending_movies():
 def top_rated_movies():
     url = f"https://api.themoviedb.org/3/movie/top_rated?api_key={API_KEY}"
     try:
-        return requests.get(url, timeout=5).json().get("results", [])
+        results = requests.get(url, timeout=5).json().get("results", [])
+        return [m for m in results if has_poster(m) and is_released(m.get("release_date"))]
     except Exception:
         return []
 
@@ -529,7 +552,9 @@ def display_providers(movie_id, region):
             providers["buy_rent"],
         ]
     )
+    st.markdown("<div class='provider-block'><strong>Where to watch</strong></div>", unsafe_allow_html=True)
     if not has_any_provider:
+        st.info("Streaming platform is not available for this country/region.")
         return False
 
     provider_group("🎁 **Free Streaming (with/without Ads):**", providers["free_streaming"], jw_link)
@@ -547,21 +572,16 @@ def render_poster_full(poster_url, title):
     )
 
 
-def display_movie_details(movie_id, title, poster, region, show_trailer=True):
+def display_movie_details(movie_id, title, poster, region, show_trailer=True, details=None):
     st.markdown("<div class='movie-row'>", unsafe_allow_html=True)
     col1, col2 = st.columns([1, 2])
 
     with col1:
         render_poster_full(poster, title)
-        has_providers = fetch_watch_providers(movie_id, region)
-        if any([has_providers["free_streaming"], has_providers["paid_streaming"], has_providers["buy_rent"]]):
-            st.markdown("<div class='provider-block'><strong>Where to watch</strong></div>", unsafe_allow_html=True)
-            provider_group("🎁 **Free Streaming (with/without Ads):**", has_providers["free_streaming"], has_providers.get("link", "#"))
-            provider_group("📺 **Paid Subscription:**", has_providers["paid_streaming"], has_providers.get("link", "#"))
-            provider_group("🛒 **Buy / Rent:**", has_providers["buy_rent"], has_providers.get("link", "#"))
+        display_providers(movie_id, region)
 
     with col2:
-        details = fetch_details(movie_id)
+        details = details or fetch_details(movie_id)
         overview = details.get("overview")
         release = details.get("release_date")
         rating = details.get("vote_average")
@@ -587,8 +607,7 @@ def display_movie_details(movie_id, title, poster, region, show_trailer=True):
                 st.markdown("<div class='trailer-block'></div>", unsafe_allow_html=True)
                 st.video(trailer)
             else:
-                st.markdown("<div class='trailer-block'></div>", unsafe_allow_html=True)
-                st.info("Trailer is not available on YouTube.")
+                st.info("Trailer not available on YouTube.")
 
         st.markdown("</div>", unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -609,8 +628,8 @@ with st.sidebar:
     st.markdown("## Navigation")
     menu = option_menu(
         menu_title=None,
-        options=["Home", "Trending Movies", "Top Rated Movies", "Genre Filter", "Compare Mode"],
-        icons=["house", "fire", "star", "funnel", "columns-gap"],
+        options=["Home", "Trending Movies", "Top Rated Movies", "Genre Filter"],
+        icons=["house", "fire", "star", "funnel"],
         menu_icon="list",
         default_index=0,
         orientation="vertical",
@@ -712,7 +731,9 @@ if menu == "Home":
                             st.markdown("---")
                             rec_title = rec.get("title", "Untitled")
                             rec_poster = "https://image.tmdb.org/t/p/w500" + rec["poster_path"] if rec.get("poster_path") else None
-                            display_movie_details(rec_id, rec_title, rec_poster, region)
+                            if not rec_poster:
+                                continue
+                            display_movie_details(rec_id, rec_title, rec_poster, region, details=rec)
                             shown_ids.add(rec_id)
                 
                 st.markdown("#### ⭐ Similar By Content")
@@ -734,7 +755,7 @@ if menu == "Home":
                     franchise_recs = fetch_franchise_movies(selected_movie_id, selected_title)
 
                     st.subheader("🎯 Selected Movie")
-                    display_movie_details(selected_movie_id, selected_title, selected_poster, region)
+                    display_movie_details(selected_movie_id, selected_title, selected_poster, region, details=tmdb_movie)
 
                     st.subheader("✨ Recommendations")
                     shown_ids = {selected_movie_id}
@@ -747,11 +768,13 @@ if menu == "Home":
                                 st.markdown("---")
                                 rec_title = rec.get("title", "Untitled")
                                 rec_poster = "https://image.tmdb.org/t/p/w500" + rec["poster_path"] if rec.get("poster_path") else None
-                                display_movie_details(rec_id, rec_title, rec_poster, region)
+                                if not rec_poster:
+                                    continue
+                                display_movie_details(rec_id, rec_title, rec_poster, region, details=rec)
                                 shown_ids.add(rec_id)
 
                     tmdb_recommendations = fetch_tmdb_recommendations(selected_movie_id, limit=20)
-                    filtered_recommendations = [rec_movie for rec_movie in tmdb_recommendations if rec_movie.get("id") not in shown_ids][:5]
+                    filtered_recommendations = [rec_movie for rec_movie in tmdb_recommendations if rec_movie.get("id") not in shown_ids][:RECOMMENDATION_LIMIT]
                     
                     if filtered_recommendations:
                         st.markdown("#### ⭐ Similar By Content")
@@ -764,15 +787,17 @@ if menu == "Home":
                             if rec_movie.get("poster_path")
                             else None
                         )
-                        display_movie_details(rec_id, rec_title, rec_poster, region)
+                        if not rec_poster:
+                            continue
+                        display_movie_details(rec_id, rec_title, rec_poster, region, details=rec_movie)
                         shown_ids.add(rec_id)
                         
                     if not filtered_recommendations and not franchise_recs:
                         st.info("No alternative recommendations found for this title.")
                 else:
-                    suggestion_movies = fetch_tmdb_search_movies(normalized_query, limit=5)
+                    suggestion_movies = fetch_tmdb_search_movies(normalized_query, limit=RECOMMENDATION_LIMIT)
                     if not suggestion_movies:
-                        suggestion_movies = trending_movies()[:5]
+                        suggestion_movies = trending_movies()[:RECOMMENDATION_LIMIT]
 
                     if suggestion_movies:
                         st.subheader("✨ Recommendations")
@@ -789,7 +814,9 @@ if menu == "Home":
                                 if movie.get("poster_path")
                                 else None
                             )
-                            display_movie_details(rec_id, rec_title, rec_poster, region)
+                            if not rec_poster:
+                                continue
+                            display_movie_details(rec_id, rec_title, rec_poster, region, details=movie)
                             shown_ids.add(rec_id)
 
                         seed_id = next(iter(shown_ids), None)
@@ -797,7 +824,7 @@ if menu == "Home":
                             api_recommendations = fetch_tmdb_recommendations(seed_id, limit=10)
                             filtered_recommendations = [
                                 rec_movie for rec_movie in api_recommendations if rec_movie.get("id") not in shown_ids
-                            ][:5]
+                            ][:RECOMMENDATION_LIMIT]
                             if filtered_recommendations:
                                 st.subheader("✨ More Recommendations")
                                 for rec_movie in filtered_recommendations:
@@ -809,7 +836,9 @@ if menu == "Home":
                                         if rec_movie.get("poster_path")
                                         else None
                                     )
-                                    display_movie_details(rec_id, rec_title, rec_poster, region)
+                                    if not rec_poster:
+                                        continue
+                                    display_movie_details(rec_id, rec_title, rec_poster, region, details=rec_movie)
                     else:
                         st.error(
                             "Movie not found in the local dataset or via API. Please try another title or a closer spelling."
@@ -823,7 +852,7 @@ elif menu == "Trending Movies":
         poster = (
             "https://image.tmdb.org/t/p/w500" + movie["poster_path"] if movie.get("poster_path") else None
         )
-        display_movie_details(movie["id"], movie.get("title", "Untitled"), poster, region)
+        display_movie_details(movie["id"], movie.get("title", "Untitled"), poster, region, details=movie)
 
 
 elif menu == "Top Rated Movies":
@@ -834,7 +863,7 @@ elif menu == "Top Rated Movies":
         poster = (
             "https://image.tmdb.org/t/p/w500" + movie["poster_path"] if movie.get("poster_path") else None
         )
-        display_movie_details(movie["id"], movie.get("title", "Untitled"), poster, region)
+        display_movie_details(movie["id"], movie.get("title", "Untitled"), poster, region, details=movie)
 
 
 elif menu == "Genre Filter":
@@ -854,55 +883,3 @@ elif menu == "Genre Filter":
             cols[i % 2].markdown(f"- {movie_name}")
 
 
-elif menu == "Compare Mode":
-    st.header("🆚 Compare 2 Movies")
-    compare_col1, compare_col2 = st.columns(2)
-    with compare_col1:
-        movie_a = st.selectbox("Select first movie", movies["title"].values, key="compare_movie_a")
-    with compare_col2:
-        movie_b = st.selectbox("Select second movie", movies["title"].values, key="compare_movie_b")
-
-    if st.button("Compare movies"):
-        if movie_a == movie_b:
-            st.warning("Please select two different movies for comparison.")
-        else:
-            index_a = movies[movies["title"] == movie_a].index[0]
-            index_b = movies[movies["title"] == movie_b].index[0]
-            movie_a_id = movies.iloc[index_a].movie_id
-            movie_b_id = movies.iloc[index_b].movie_id
-
-            details_a = fetch_details(movie_a_id)
-            details_b = fetch_details(movie_b_id)
-            poster_a = fetch_poster(movie_a_id)
-            poster_b = fetch_poster(movie_b_id)
-
-            def format_genres(details):
-                genres = details.get("genres", [])
-                genre_names = [g.get("name") for g in genres if g.get("name")]
-                return ", ".join(genre_names) if genre_names else "Not Available"
-
-            def format_runtime(details):
-                runtime = details.get("runtime")
-                if not runtime: return "Not Available"
-                return f"{runtime // 60}h {runtime % 60}m" if runtime // 60 else f"{runtime % 60}m"
-
-            left, right = st.columns(2)
-            for col, title, movie_id, poster, details in [
-                (left, movie_a, movie_a_id, poster_a, details_a),
-                (right, movie_b, movie_b_id, poster_b, details_b),
-            ]:
-                with col:
-                    st.subheader(title)
-                    render_poster_full(poster, title)
-                    st.markdown("<div class='movie-card'>", unsafe_allow_html=True)
-                    st.markdown(
-                        f"<span class='meta-pill'>⭐ {details.get('vote_average', 'N/A')}</span>"
-                        f"<span class='meta-pill'>📅 {details.get('release_date', 'N/A')}</span>"
-                        f"<span class='meta-pill'>🎭 {format_genres(details)}</span>"
-                        f"<span class='meta-pill'>⏱️ {format_runtime(details)}</span>",
-                        unsafe_allow_html=True,
-                    )
-                    st.write(details.get("overview", "Not Available"))
-                    st.markdown("<div class='provider-block'><strong>Where to watch</strong></div>", unsafe_allow_html=True)
-                    display_providers(movie_id, region)
-                    st.markdown("</div>", unsafe_allow_html=True)
