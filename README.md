@@ -10,7 +10,7 @@ A Machine Learning-based web application that recommends movies based on user in
 ### 🔴 Live Demo
 **Check out the live app here:** [Movie Recommendation System](https://movie-recommendation-system-superb.streamlit.app/)
 
-**View the Model Training Code:** [![Open In Colab](https://colab.research.google.com/drive/1MXBn1lfrMUnBFxPA78wYjpkbejjcBsLm?usp=drive_link)
+**View the Model Training Code:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1MXBn1lfrMUnBFxPA78wYjpkbejjcBsLm?usp=drive_link)
 
 ---
 
